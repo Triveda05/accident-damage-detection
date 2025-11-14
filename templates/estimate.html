@@ -3,211 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Repair Estimate</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
-
+    <title>Damage Estimate Result</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(45deg, #6ab7f5, #f086d3);
-        }
-        .estimate-container {
-            max-width: 800px;
-            background: #fff;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-            width: 100%;
-        }
-        h2 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 1.5rem;
-        }
-        .images {
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 20px;
-        }
-        .images img {
-            max-width: 45%;
-            height: auto;
-            border-radius: 8px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        table, th, td {
-            border: 1px solid #ccc;
-        }
-        th, td {
-            padding: 10px;
-            text-align: center;
-        }
-        .total-cost {
-            font-size: 20px;
-            font-weight: bold;
-            text-align: center;
-            margin-top: 20px;
-        }
-        .repair-costs h3 {
-            text-align: center;
-            color: #333;
-        }
-        .print-button {
-            display: block;
-            width: 200px;
-            margin: 20px auto 0;
-            padding: 10px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-        .print-button:hover {
-            background-color: #45a049;
-        }
-        @media print {
-            body {
-                background: none;
-            }
-            .estimate-container {
-                box-shadow: none;
-            }
-            .print-button {
-                display: none;
-            }
-        }
-
-        .nav-buttons {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .home-button, .user-profile {
-            background-color: rgba(255, 255, 255, 0.9);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .home-button:hover, .user-profile:hover {
-            background-color: rgba(255, 255, 255, 1);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
-        }
-
-        .home-button i, .user-profile i {
-            font-size: 1.2rem;
-            color: #3498db;
-        }
-
-        .user-profile {
-            position: relative;
-        }
-
-        .profile-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            padding: 10px;
-            display: none;
-            z-index: 1000;
-        }
-
-        .user-profile:hover .profile-dropdown {
-            display: block;
-        }
-
-        .profile-dropdown a {
-            display: block;
-            padding: 8px 15px;
-            color: #2c3e50;
-            text-decoration: none;
-            transition: background-color 0.3s ease;
-            white-space: nowrap;
-        }
-
-        .profile-dropdown a:hover {
-            background-color: #f1f1f1;
+        body { font-family: 'Inter', sans-serif; }
+        .shadow-3xl {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+                        0 4px 6px -2px rgba(0, 0, 0, 0.05),
+                        0 20px 25px -5px rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
-<body>
-    <div class="nav-buttons">
-        <a href="/" class="home-button">
-            <i class="fas fa-home"></i>
-        </a>
-        <div class="user-profile">
-            <i class="fas fa-user-circle"></i>
-            <div class="profile-dropdown">
-                <a href="/view_profile">View Profile</a>
-                <a href="/dashboard">Dashboard</a>
-                <a href="/logout">Logout</a>
+<body class="bg-gray-50 min-h-screen p-8">
+
+    <div class="max-w-6xl mx-auto bg-white p-8 rounded-2xl shadow-3xl border border-gray-100">
+
+        <h2 class="text-4xl font-extrabold text-indigo-700 text-center mb-6">
+            Damage Assessment & Estimated Cost
+        </h2>
+
+        <div class="bg-indigo-50 text-indigo-800 p-4 rounded-xl mb-8 flex flex-wrap justify-center gap-8 shadow-inner">
+            <div class="text-center">
+                <p class="text-sm font-medium opacity-80">Car Brand</p>
+                <p class="text-xl font-bold">{{ car_info.brand or "Unknown" }}</p>
+            </div>
+            <div class="text-center">
+                <p class="text-sm font-medium opacity-80">Car Model</p>
+                <p class="text-xl font-bold">{{ car_info.model or "Unknown" }}</p>
             </div>
         </div>
-    </div>
-    <div class="estimate-container">
-        <h2>Quotation for Damage Recovery</h2>
-        <div class="images">
-            <img src="{{ url_for('static', filename=original_image) }}" alt="Original Image">
-            <img src="{{ url_for('static', filename=detected_image) }}" alt="Detected Image">
+
+        {% set grand_total = part_prices.values() | map(attribute='total') | sum %}
+
+        <div class="grid md:grid-cols-2 gap-8 mb-12">
+            <div class="bg-gray-100 p-4 rounded-xl shadow-inner">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4 text-center">Original Image</h3>
+                <img src="{{ original_image or '' }}" alt="Original Image" class="w-full h-auto rounded-lg shadow-md border border-gray-200 object-cover">
+            </div>
+            
+            <div class="bg-indigo-50 p-4 rounded-xl shadow-inner">
+                <h3 class="text-xl font-semibold text-indigo-700 mb-4 text-center">Detected Damage</h3>
+                <img src="{{ detected_image or '' }}" alt="Detected Damage" class="w-full h-auto rounded-lg shadow-xl border-4 border-indigo-400 object-cover">
+                <p class="text-center text-sm text-gray-600 mt-2">Bounding boxes show detected parts.</p>
+            </div>
         </div>
-        <div class="repair-costs">
-            <h3>Estimated Repair Prices</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Part Name</th>
-                        <th>Count</th>
-                        <th>Price per Part ($)</th>
-                        <th>Total Price ($)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for part, details in part_prices.items() %}
-                    <tr>
-                        <td>{{ part }}</td>
-                        <td>{{ details['count'] }}</td>
-                        <td>{{ details['price'] }}</td>
-                        <td>{{ details['total'] }}</td>
-                    </tr>
+
+        <div class="bg-white p-6 rounded-xl shadow-2xl border border-indigo-200">
+
+            <h3 class="text-2xl font-bold text-gray-800 mb-6 border-b pb-3">Repair Estimation</h3>
+
+            {% if grand_total > 0 %} 
+                <div class="space-y-4">
+                    
+                    {% for part, data in part_prices.items() %}
+                        <div class="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0">
+                            <span class="text-lg font-medium text-gray-700">
+                                {{ part }} (x{{ data.count or 0 }})
+                            </span>
+
+                            <div class="text-right">
+                                <span class="text-sm text-gray-500">
+                                    @ ₹{{ "{:,.2f}".format(data.price or 0) }} per unit
+                                </span>
+                                <span class="block text-xl font-semibold text-gray-900">
+                                    ₹{{ "{:,.2f}".format(data.total or 0) }}
+                                </span>
+                            </div>
+                        </div>
                     {% endfor %}
-                </tbody>
-            </table>
-            <div class="total-cost">
-                Total Estimated Price: ₹{{ part_prices.values() | map(attribute='total') | sum }}
-            </div>            
+
+                    <div class="pt-4 mt-6 border-t-2 border-indigo-400 flex justify-between items-center">
+                        <span class="text-2xl font-bold text-indigo-700">GRAND TOTAL ESTIMATE</span>
+                        <span class="text-3xl font-extrabold text-indigo-900">
+                            ₹{{ "{:,.2f}".format(grand_total) }}
+                        </span>
+                    </div>
+
+                </div>
+
+                <p class="text-sm text-green-700 mt-6">
+                    *Prices are based on standard replacement costs. Labor & taxes not included.
+                </p>
+
+            {% else %}
+                <div class="text-center py-10">
+                    <p class="text-xl text-gray-600">
+                        No detectable damage OR missing price data for selected model.
+                    </p>
+                </div>
+            {% endif %}
         </div>
-        <button class="print-button" onclick="window.print()">Print Quotation</button>
+
+        <div class="text-center mt-12">
+            <a href="{{ url_for('predict_damage') }}" 
+               class="inline-flex items-center px-6 py-3 text-base font-medium rounded-lg shadow-sm text-white bg-gray-500 hover:bg-gray-600 transition">
+                &larr; Analyze Another Image
+            </a>
+        </div>
+
     </div>
-    <script>
-        function printQuotation() {
-            window.print();
-        }
-    </script>
+
 </body>
 </html>

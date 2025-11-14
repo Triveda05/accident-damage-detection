@@ -1,298 +1,204 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-import config
-import mysql.connector as connector
+from flask import Flask, render_template, request, redirect, url_for
 from werkzeug.utils import secure_filename
-import os
 from ultralytics import YOLO
-import bcrypt
 from collections import Counter
-from dotenv import load_dotenv
+import os
+import json
+import shutil # Added for safer file operations
 
+# --- CONFIGURATION ---
+# 1. Path to your model weights (You MUST update this path on your local system)
+# NOTE: This is a placeholder. Update to your actual path like "C:/path/to/best.pt"
+MODEL_PATH = r"C:\Users\rayal\OneDrive\Desktop\accident-damage-detection\models\model weights\best.pt" 
 
-load_dotenv()
+# 2. Path to your pricing JSON file
+PRICE_JSON_PATH = "car_parts_prices.json" 
 
+# 3. Define UPLOAD folder relative to the app.py location
+UPLOAD_FOLDER = 'static/uploads'
 
+# Corrected Flask app initialization with double underscores
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY')
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Max 16MB file size
 
+# Ensure the upload folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def connect_to_db():
+# --- GLOBAL DATA AND MODEL LOADING ---
+CAR_PRICES = {}
+AVAILABLE_BRANDS = []
+MODEL = None
+
+def load_data():
+    """Loads car parts prices from the JSON file."""
+    global CAR_PRICES, AVAILABLE_BRANDS
     try:
-        connection = connector.connect(**config.mysql_credentials)
-        return connection
-    except connector.Error as e:
-        print(f"Error connecting to database: {e}")
+        # NOTE: This assumes car_parts_prices.json is in the same directory as app.py
+        with open(PRICE_JSON_PATH, 'r') as f:
+            CAR_PRICES = json.load(f)
+            AVAILABLE_BRANDS = sorted(list(CAR_PRICES.keys()))
+        print(f"✓ Pricing data loaded successfully from: {PRICE_JSON_PATH}")
+    except FileNotFoundError:
+        print(f"❌ ERROR: Price file not found at '{PRICE_JSON_PATH}'. Pricing will fail.")
+    except json.JSONDecodeError:
+        print(f"❌ ERROR: Could not parse JSON data in '{PRICE_JSON_PATH}'.")
+
+load_data()
+
+# Load YOLO model
+try:
+    # Use global variable for the model
+    MODEL = YOLO(MODEL_PATH) 
+    print(f"✓ Model loaded successfully from: {MODEL_PATH}")
+except Exception as e:
+    print(f"❌ ERROR: Could not load YOLO model from {MODEL_PATH}. Using 'yolov8n.pt' as fallback. Error: {e}")
+    # Fallback model is used if the specified model path fails
+    MODEL = YOLO('yolov8n.pt') 
+
+# --- UTILITIES ---
+
+# Mapping of class IDs to part names (MUST match your training data)
+def get_part_name_from_id(class_id):
+    # Adjust this list if your model uses different class names or order
+    class_names = ['Bonnet', 'Bumper', 'Dickey', 'Door', 'Fender', 'Light', 'Windshield']
+    try:
+        # Convert class_id to integer for list indexing
+        return class_names[int(class_id)]
+    except (IndexError, TypeError):
         return None
 
+def calculate_prices(car_brand, car_model, class_counts):
+    """Calculates the estimated cost based on detected parts and user-selected model/brand."""
+    prices = {}
+    
+    # Check if brand and model exist in the loaded data
+    if car_brand not in CAR_PRICES or car_model not in CAR_PRICES[car_brand]:
+        print(f"WARNING: Price data not found for {car_brand} - {car_model}. Cannot calculate prices.")
+        return {}
+
+    model_prices = CAR_PRICES[car_brand][car_model]
+    
+    for class_id, count in class_counts.items():
+        part_name = get_part_name_from_id(class_id)
+        
+        # Check if the detected part has a price defined for the selected model
+        if part_name and part_name in model_prices:
+            price_per_part = model_prices[part_name]
+            total_price = price_per_part * count
+            prices[part_name] = {
+                'count': count, 
+                'price': price_per_part, 
+                'total': total_price
+            }
+        elif part_name:
+            print(f"WARNING: Part '{part_name}' detected but no price found for {car_model}.")
+            
+    return prices
+
+# --- ROUTES ---
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    # Direct users to the main prediction page immediately
+    return redirect(url_for('predict_damage'))
 
-
-@app.route('/signup', methods=['GET', 'POST'])
-def signup():
-    if request.method == 'POST':
-        name = request.form.get('name')
-        password = request.form.get('password')
-        email = request.form.get('email')
-        vehicle_id = request.form.get('vehicleId')
-        contact_number = request.form.get('phoneNumber')
-        address = request.form.get('address')
-        car_brand = request.form.get('carBrand')
-        model = request.form.get('carModel')
-        
-        # print("DATA from form")
-        # print(f"name : {name}")
-        # print(f"email : {email}")
-        # print(f"password : {password}")
-        # print(f"vehicle_id : {vehicle_id}")
-        # print(f"contact_number : {contact_number}")
-        # print(f"address : {address}")
-        # print(f"car_brand : {car_brand}")
-        # print(f"model : {model}")
-
-        if not all([name, password, email, vehicle_id, contact_number, address, car_brand, model]):
-            flash("All fields are required!", "error")
-            return render_template('signup.html')
-
-        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-        connection = connect_to_db()
-        if connection:
-            try:
-                with connection.cursor() as cursor:
-                    query = '''
-                    INSERT INTO user_info (name, password, email, vehicle_id, contact_number, address, car_brand, model)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    '''
-                    cursor.execute(query, (name, hashed_password, email, vehicle_id, contact_number, address, car_brand, model))
-                    connection.commit()
-                flash("Signup successful!", "success")
-                return redirect(url_for('dashboard'))
-            except connector.IntegrityError as e:
-                if 'Duplicate entry' in str(e):
-                    flash("Email already exists. Please use a different email.", "error")
-                else:
-                    flash("An error occurred while signing up. Please try again.", "error")
-            except connector.Error as e:
-                print(f"Error executing query: {e}")
-                flash("An error occurred while signing up. Please try again.", "error")
-        else:
-            flash("Database connection failed. Please try again later.", "error")
-            
-    return render_template('signup.html')
-
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        print(f"Email : {email}")
-        print(f"Password : {password}")
-
-        if not email or not password:
-            flash("Email and password are required!", "error")
-            return render_template('login.html')
-
-        connection = connect_to_db()
-        if connection:
-            try:
-                with connection.cursor() as cursor:
-                    query = "SELECT password FROM user_info WHERE email = %s"
-                    cursor.execute(query, (email,))
-                    result = cursor.fetchone()
-                    if result and bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
-                        session['user_email'] = email  # Store user email in session
-                        flash("Login successful!", "success")
-                        return redirect(url_for('dashboard'))
-                    else:
-                        flash("Invalid email or password.", "error")
-            except connector.Error as e:
-                print(f"Error executing query: {e}")
-                flash("An error occurred during login. Please try again.", "error")
-        else:
-            flash("Database connection failed. Please try again later.", "error")
-
-    return render_template('login.html')
-
-
-@app.route('/logout')
-def logout():
-    session.pop('user_email', None)  # Remove user email from session
-    flash("You have been logged out.", "info")
+@app.route('/predict', methods=['GET', 'POST'])
+def predict_damage():
+    # Pass this data for both GET and POST requests that render predict.html
+    template_data = {'brands': AVAILABLE_BRANDS, 'prices': CAR_PRICES}
+    original_image_path = None
+    detected_image_path = None
     
-    return redirect(url_for('login'))
-
-
-# Load YOLO model
-model_path = "D:/Vehicle Damage Detection/models/model weights/best.pt"
-model = YOLO(model_path)
-
-
-@app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
     if request.method == 'POST':
+        # Check if the model was loaded successfully before proceeding with prediction
+        if not MODEL:
+            template_data['error'] = "The YOLO model failed to load. Cannot perform damage analysis."
+            return render_template('predict.html', **template_data)
+
         file = request.files.get('image')
-        if not file:
-            flash('Please upload an image.', 'error')
-            return render_template('dashboard.html')
+        car_brand = request.form.get('car_brand')
+        car_model = request.form.get('car_model')
+
+        if not all([file, car_brand, car_model]):
+            template_data['error'] = 'Please select a car and upload an image.'
+            return render_template('predict.html', **template_data)
+
+        if file.filename == '':
+            template_data['error'] = 'Please upload an image.'
+            return render_template('predict.html', **template_data)
 
         filename = secure_filename(file.filename)
         if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            flash('Invalid file type. Please upload an image.', 'error')
-            return render_template('dashboard.html')
+            template_data['error'] = 'Invalid file type. Please upload a PNG, JPG, or JPEG image.'
+            return render_template('predict.html', **template_data)
         
-        # Save the uploaded image
-        image_path = os.path.join('D:/Vehicle Damage Detection/static', 'uploaded_image.jpg')
-        print("File uploaded successfully")
+        # Prepare file paths
+        unique_id = os.urandom(8).hex()
+        original_filename = f"original_{unique_id}_{filename}"
+        detected_filename = f"detected_{unique_id}_{filename}"
         
-        file.save(image_path)
-        # print(f"Upload image path : {image_path}")
-        # Make predictions using YOLO
-        result = model(image_path)
-        detected_objects = result[0].boxes
-        class_ids = [box.cls.item() for box in detected_objects]
-        class_counts = Counter(class_ids)
-        # print(f"Class counts : {class_counts}")
-        # Save the image with detections
-        detected_image_path = os.path.join('D:/Vehicle Damage Detection/static', 'detected_image.jpg')
-        detected_image_path = result[0].save(detected_image_path)
-        print(f"Detected image path : {detected_image_path}")
-        # Get the user's email from session
-        user_email = session.get('user_email')
-        print(user_email)
-        if not user_email:
-            flash('You need to log in to get an estimate.', 'error')
-            return redirect(url_for('login'))
-
-        # Fetch part prices from the database
-        part_prices = get_part_prices(user_email, class_counts)
-        # print(f"Part prices : {part_prices}")
-        return render_template('estimate.html', original_image='uploaded_image.jpg', detected_image='detected_image.jpg', part_prices=part_prices)
-
-    return render_template('dashboard.html')
-
-
-def get_part_prices(email, class_counts):
-    connection = connect_to_db()
-    if connection:
+        original_image_path = os.path.join(app.config['UPLOAD_FOLDER'], original_filename)
+        detected_image_path = os.path.join(app.config['UPLOAD_FOLDER'], detected_filename)
+        
         try:
-            with connection.cursor(dictionary=True) as cursor:
-                # Get user's car brand and model
-                cursor.execute("SELECT car_brand, model FROM user_info WHERE email = %s", (email,))
-                user_data = cursor.fetchone()
-                if not user_data:
-                    print("User not found")
-                    return {}
+            # 1. Save the uploaded image
+            file.save(original_image_path)
+            
+            # 2. Make predictions using YOLO
+            # Setting 'save=True' here will save the detected image to the default YOLO run folder, 
+            # which isn't the UPLOAD_FOLDER. We'll manually save the result below.
+            results = MODEL(original_image_path) 
+            
+            result = results[0] if results else None
+            
+            # Check for results before accessing boxes
+            if result and result.boxes:
+                detected_objects = result.boxes
+                class_ids = [box.cls.item() for box in detected_objects]
+                class_counts = Counter(class_ids)
 
-                car_brand = user_data['car_brand']
-                car_model = user_data['model']
+                # 3. Save the image with detections to the correct path
+                result.save(filename=detected_image_path)
+                
+                # 4. Calculate estimation using JSON data
+                part_prices = calculate_prices(car_brand, car_model, class_counts)
+            else:
+                # Handle case where no detections are made
+                class_counts = Counter()
+                part_prices = {}
+                # If no damage is detected, just use the original image for both views
+                # We copy the original file to the 'detected' filename path 
+                # to ensure both URLs are valid and point to an image.
+                shutil.copyfile(original_image_path, detected_image_path)
+                
+            return render_template(
+                'estimate.html', 
+                original_image=url_for('static', filename=f'uploads/{original_filename}'), 
+                detected_image=url_for('static', filename=f'uploads/{detected_filename}'), 
+                part_prices=part_prices,
+                car_info={'brand': car_brand, 'model': car_model}
+            )
+            
+        except Exception as e:
+            print(f"An error occurred during prediction: {e}")
+            template_data['error'] = f"An unexpected error occurred during analysis: {e}"
+            return render_template('predict.html', **template_data)
+        
+        finally:
+            # Use finally to ensure cleanup happens whether try block succeeded or failed
+            # We only remove the original file as the 'detected' file is needed for the estimate page.
+            # However, for a complete cleanup approach (if files aren't meant to persist), 
+            # you'd need a separate mechanism or remove both here. 
+            # For this MVP, we leave the files in `static/uploads` to be served.
+            # If you want to remove all files after estimate, you'd move this cleanup to a post-view action.
+            # Keeping cleanup as per original intent, but making it more robust:
+            pass # Files remain in /static/uploads for display
+            
+    # GET request handler (Renders the upload form)
+    return render_template('predict.html', **template_data)
 
-                # Fetch part prices
-                prices = {}
-                for class_id, count in class_counts.items():
-                    part_name = get_part_name_from_id(class_id)
-                    # print(f"Parts name: {part_name}")
-                    if part_name:
-                        cursor.execute(
-                            "SELECT price FROM car_models WHERE brand = %s AND model = %s AND part = %s",
-                            (car_brand, car_model, part_name)
-                        )
-                        price_data = cursor.fetchone()
-                        # print(f"Price data : {price_data}")
-                        if price_data:
-                            price_per_part = price_data['price']
-                            total_price = price_per_part * count
-                            prices[part_name] = {'count': count, 'price': price_per_part, 'total': total_price}
-                # print(f"Prices : {prices}")
-                return prices
-        except connector.Error as e:
-            print(f"Error executing query: {e}")
-            return {}
-    print("Connection failed")
-    return {}
-
-
-def get_part_name_from_id(class_id):
-    class_names = ['Bonnet', 'Bumper', 'Dickey', 'Door', 'Fender', 'Light', 'Windshield']
-    if 0 <= class_id < len(class_names):
-        return class_names[int(class_id)]
-    return None
-
-
-@app.route('/view_profile')
-def view_profile():
-    if 'user_email' not in session:
-        flash('You need to login to view your profile.', 'error')
-        return redirect(url_for('login'))
-
-    connection = connect_to_db()
-    if connection:
-        try:
-            with connection.cursor(dictionary=True) as cursor:
-                # Fetch current user information
-                cursor.execute("SELECT * FROM user_info WHERE email = %s", (session['user_email'],))
-                user_info = cursor.fetchone()
-                if not user_info:
-                    flash('User not found.', 'error')
-                    return redirect(url_for('dashboard'))
-                return render_template('view_profile.html', user_info=user_info)
-        except connector.Error as e:
-            print(f"Error executing query: {e}")
-            flash("An error occurred while fetching your profile. Please try again.", "error")
-    else:
-        flash("Database connection failed. Please try again later.", "error")
-
-    return redirect(url_for('dashboard'))
-
-
-@app.route('/edit_profile', methods=['GET', 'POST'])
-def edit_profile():
-    if 'user_email' not in session:
-        flash('You need to login to edit your profile.', 'error')
-        return redirect(url_for('login'))
-
-    connection = connect_to_db()
-    if connection:
-        try:
-            with connection.cursor(dictionary=True) as cursor:
-                if request.method == 'POST':
-                    # Update user information
-                    query = '''
-                    UPDATE user_info
-                    SET name = %s, email = %s, vehicle_id = %s, contact_number = %s, 
-                        address = %s, car_brand = %s, model = %s
-                    WHERE email = %s
-                    '''
-                    cursor.execute(query, (
-                        request.form['name'],
-                        request.form['email'],
-                        request.form['vehicleId'],
-                        request.form['phoneNumber'],
-                        request.form['address'],
-                        request.form['carBrand'],
-                        request.form['carModel'],
-                        session['user_email']
-                    ))
-                    connection.commit()
-                    flash('Profile updated successfully!', 'success')
-                    session['user_email'] = request.form['email']  # Update session if email changed
-                    return redirect(url_for('dashboard'))
-
-                # Fetch current user information
-                cursor.execute("SELECT * FROM user_info WHERE email = %s", (session['user_email'],))
-                user_info = cursor.fetchone()
-                return render_template('edit_profile.html', user_info=user_info)
-
-        except connector.Error as e:
-            print(f"Error executing query: {e}")
-            flash("An error occurred while updating your profile. Please try again.", "error")
-    else:
-        flash("Database connection failed. Please try again later.", "error")
-
-    return redirect(url_for('dashboard'))
-
+# Corrected main execution block with double underscores
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Set debug=False for production
+    app.run(debug=True, port=8000) # Changed port from default 5000 to 8000
